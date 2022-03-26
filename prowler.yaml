@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Create EC2 instanace with Prowler pre-configured and tied to roles to run"
+# Template Parameters
+# ImageId : Default is AWS Linux 2 ami-0e1d30f2c40c4c701
+# InstanceType : Default is t3.micro
+# VpcId : VPC to launch in
+# SubnetId : Subnet to connect
+# KeyName : Keypair to use
+# CidrIp : CIDR range for SSH x.x.x.x/x
+Resources:
+# Create Prowler Instance - Parameters for ImageId, InstanceType, SubnetId, SecurityGroupIds, and KeyName
+  ProwlerInstance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref ProwlerInstanceProfile
+      Tags:
+        -
+          Key: Name
+          Value: Prowler
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            Encrypted: true
+# Run bash to install and configure Prowler
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            sudo yum update -y
+            sudo yum remove -y awscli
+            cd /home/ec2-user
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/home/ec2-user/awscliv2.zip"
+            unzip /home/ec2-user/awscliv2.zip
+            sudo /home/ec2-user/aws/install
+            sudo yum install -y python3 jq git
+            sudo pip3 install detect-secrets==1.0.3
+            git clone https://github.com/prowler-cloud/prowler /home/ec2-user/prowler
+            chown -R ec2-user:ec2-user /home/ec2-user/prowler
+  ProwlerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: prowler-ec2-instance-profile
+      Path: /
+      Roles:
+       - !Ref ProwlerEc2InstanceRole
+# Create Security Group
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+        GroupDescription: Allow ssh from specific host
+        GroupName: ProwlerSecurityGroup
+        VpcId: !Ref VpcId
+        SecurityGroupIngress:
+          - IpProtocol: 'tcp'
+            FromPort: '22'
+            ToPort: '22'
+            CidrIp: !Ref CidrIp
+# Create EC2 Instance Role to run security checks and attach to instance
+  ProwlerEc2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: prowler-ec2-instance-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/SecurityAudit
+        - arn:aws:iam::aws:policy/job-function/ViewOnlyAccess
+      Path: /
+# Parameters for cloudformation template with some defaults
+Parameters:
+  ImageId:
+    Type: String
+    Description: AMI - Linux 2
+    Default: 'ami-0e1d30f2c40c4c701'
+  InstanceType:
+    Type: String
+    Description: Instance type to be used - t3.micro default
+    Default: t3.micro
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to be used
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet to be used
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Keyname
+  CidrIp:
+    Type: String
+    Description: CidrIp to be used to connect from x.x.x.x/x
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "Network Configuration"
+        Parameters:
+          - ImageId
+          - InstanceType
+          - VpcId
+          - SubnetId
+          - KeyName
+          - CidrIp
+Conditions: {}
